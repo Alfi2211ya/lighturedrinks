@@ -353,6 +353,22 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     };
 
     const ADMIN_PIN = '30112544';
+    // Escapes user-supplied text before it's inserted into innerHTML.
+    // Customer name / phone / notes come straight from a public form with
+    // no server-side validation, so without this a malicious order could
+    // inject a <script> or an onerror= handler that runs inside the ADMIN's
+    // browser the moment they open the orders panel (stored XSS). Every
+    // customer-controlled field rendered as HTML below must go through this.
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     const MENU = [
       { id: '1', name: 'Lychee Tea', price: 5000 },
       { id: '3', name: 'CheeMilk Boba', price: 10000 },
@@ -704,11 +720,11 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
         }
         
         return `<div class="p-3 rounded-xl bg-white shadow-sm">
-          <div class="flex justify-between items-start"><div><strong>${order.customer_name}</strong><br><span class="text-xs text-gray-500">${order.phone_number}</span><br><span class="text-xs text-gray-400">📅 ${dateStr}</span></div>
+          <div class="flex justify-between items-start"><div><strong>${escapeHtml(order.customer_name)}</strong><br><span class="text-xs text-gray-500">${escapeHtml(order.phone_number)}</span><br><span class="text-xs text-gray-400">📅 ${dateStr}</span></div>
           <div class="flex flex-col gap-1 items-end"><span class="text-xs px-2 py-0.5 rounded-full ${sc[order.status] || sc.pending}">${st[order.status] || st.pending}</span><span class="text-xs px-2 py-0.5 rounded-full ${order.payment_method==='qris'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}">${order.payment_method==='qris'?'💳 QRIS':'💵 Tunai'}</span></div></div>
-          <p class="text-sm mt-1">${order.items_ordered}</p><p class="text-sm font-bold">Rp ${Number(order.total_price).toLocaleString('id-ID')}</p>
+          <p class="text-sm mt-1">${escapeHtml(order.items_ordered)}</p><p class="text-sm font-bold">Rp ${Number(order.total_price).toLocaleString('id-ID')}</p>
           ${proofSection}
-          ${order.notes ? `<p class="text-xs text-gray-600 mt-2">${order.notes}</p>` : ''}
+          ${order.notes ? `<p class="text-xs text-gray-600 mt-2">${escapeHtml(order.notes)}</p>` : ''}
           ${buttons}
           <button type="button" class="admin-delete w-full mt-2 py-1.5 rounded-lg bg-red-100 text-red-700 text-sm font-medium" data-id="${order.__backendId}">🗑️ Hapus</button></div>`;
       }).join('');

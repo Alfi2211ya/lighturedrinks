@@ -43,6 +43,7 @@
   <!-- Firebase (replaces Canva's data_sdk.js so this site works standalone, e.g. on GitHub Pages) -->
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <!-- QR code generator (client-side), used to build the dynamic QRIS code with the order total embedded -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
  </head>
@@ -148,6 +149,13 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
      </div>
      <div>
       <label data-template-id="label-notes" class="canva-text text-sm font-medium" for="cust-notes" style="color: rgb(51, 51, 51); font-weight: 500; font-style: normal; font-size: 16px;">Catatan (Opsional)</label> <textarea id="cust-notes" rows="2" class="w-full mt-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-300"></textarea>
+     </div>
+     <!-- Honeypot: hidden from real users via CSS + off-screen position + aria-hidden.
+          Simple bots that auto-fill every form field will fill this in; humans never see it.
+          If it has a value on submit, we quietly treat the order as spam. -->
+     <div style="position:absolute; left:-9999px; top:-9999px;" aria-hidden="true">
+      <label for="cust-website">Website</label>
+      <input type="text" id="cust-website" name="website" tabindex="-1" autocomplete="off">
      </div>
     </div>
     <div id="step2-error" class="hidden mt-2 text-red-600 text-sm text-center"></div>
@@ -279,20 +287,20 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
   </div>
   <script>
     // ============================================================
-    // Firebase Firestore backend (replaces Canva's window.dataSdk)
+    // Firebase Firestore + Auth backend
     // ------------------------------------------------------------
-    // This shim reproduces the same interface the rest of the app
-    // already expects (init/create/update/delete + onDataChanged),
-    // so nothing below this block needed to change.
-    //
-    // SECURITY NOTE: Firestore rules must allow read/write for this
-    // to work with no login system (customers don't sign in to
-    // place an order). That means anyone who inspects this page's
-    // source can technically read/write the same data directly via
-    // the Firebase config below - the admin PIN in this app is a
-    // UI-level gate only, not real backend security. Acceptable for
-    // a small shop MVP, but don't store anything more sensitive than
-    // what's already here (name/phone/order/payment proof image).
+    // Two collections, two trust levels:
+    //   - lighture_stock  : public read (needed to show "Habis" badges
+    //                       to every visitor), write requires admin login.
+    //   - lighture_orders : anyone can CREATE (so guests can checkout),
+    //                       but read/update/delete require admin login.
+    //                       This is what actually protects customer
+    //                       names/phone numbers/payment proof photos -
+    //                       only an authenticated admin session can see
+    //                       or touch existing orders.
+    // The exact allow/deny logic lives in Firestore Security Rules
+    // (configured in the Firebase Console, not in this file - client
+    // code can request anything, but the rules are the real gatekeeper).
     // ============================================================
     const firebaseConfig = {
       apiKey: "AIzaSyCaueKccWhZP980oKGT_ZvXtb2Angv-Rpo",
@@ -304,47 +312,62 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     };
     const firebaseApp = firebase.initializeApp(firebaseConfig);
     const firestoreDb = firebase.firestore();
-    const FIRESTORE_COLLECTION = 'lighture_records';
+    const firebaseAuth = firebase.auth();
+    // Keep the admin session tied to this browser tab only - closing the
+    // tab/browser forces a fresh PIN entry next time, so a shared/public
+    // device doesn't stay silently logged in as admin forever.
+    firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(() => {});
+
+    const STOCK_COLLECTION = 'lighture_stock';
+    const ORDERS_COLLECTION = 'lighture_orders';
+    // Not a real inbox - just a fixed identifier Firebase Auth uses to tell
+    // "the admin account" apart. The PIN typed in the UI is sent as the
+    // password straight to Firebase's servers over HTTPS; it is never
+    // stored or compared inside this file, so it can't be read via
+    // "View Source" like the old hardcoded PIN could.
+    const ADMIN_EMAIL = 'admin@lighturedrinks.internal';
 
     window.dataSdk = {
-      _unsubscribe: null,
-      init(handler) {
-        return new Promise((resolve) => {
-          this._unsubscribe = firestoreDb.collection(FIRESTORE_COLLECTION).onSnapshot(
-            (snapshot) => {
-              const data = snapshot.docs.map(doc => ({ ...doc.data(), __backendId: doc.id }));
-              handler.onDataChanged(data);
-              resolve();
-            },
-            (error) => {
-              console.error('Firestore listen error:', error);
-              resolve();
-            }
-          );
-        });
-      },
-      async create(record) {
+      async createOrder(record) {
         try {
-          await firestoreDb.collection(FIRESTORE_COLLECTION).add(record);
+          await firestoreDb.collection(ORDERS_COLLECTION).add(record);
           return { isOk: true };
         } catch (err) {
           return { isOk: false, error: { message: err.message } };
         }
       },
-      async update(record) {
+      async updateOrder(record) {
         try {
           const { __backendId, ...fields } = record;
-          if (!__backendId) throw new Error('Data pesanan tidak punya ID, tidak bisa diupdate.');
-          await firestoreDb.collection(FIRESTORE_COLLECTION).doc(__backendId).update(fields);
+          if (!__backendId) throw new Error('ID pesanan tidak ditemukan.');
+          await firestoreDb.collection(ORDERS_COLLECTION).doc(__backendId).update(fields);
           return { isOk: true };
         } catch (err) {
           return { isOk: false, error: { message: err.message } };
         }
       },
-      async delete(record) {
+      async deleteOrder(record) {
         try {
-          if (!record.__backendId) throw new Error('Data pesanan tidak punya ID, tidak bisa dihapus.');
-          await firestoreDb.collection(FIRESTORE_COLLECTION).doc(record.__backendId).delete();
+          if (!record.__backendId) throw new Error('ID pesanan tidak ditemukan.');
+          await firestoreDb.collection(ORDERS_COLLECTION).doc(record.__backendId).delete();
+          return { isOk: true };
+        } catch (err) {
+          return { isOk: false, error: { message: err.message } };
+        }
+      },
+      async createStock(record) {
+        try {
+          await firestoreDb.collection(STOCK_COLLECTION).add(record);
+          return { isOk: true };
+        } catch (err) {
+          return { isOk: false, error: { message: err.message } };
+        }
+      },
+      async updateStock(record) {
+        try {
+          const { __backendId, ...fields } = record;
+          if (!__backendId) throw new Error('ID stok tidak ditemukan.');
+          await firestoreDb.collection(STOCK_COLLECTION).doc(__backendId).update(fields);
           return { isOk: true };
         } catch (err) {
           return { isOk: false, error: { message: err.message } };
@@ -352,7 +375,6 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       }
     };
 
-    const ADMIN_PIN = '30112544';
     // Escapes user-supplied text before it's inserted into innerHTML.
     // Customer name / phone / notes come straight from a public form with
     // no server-side validation, so without this a malicious order could
@@ -379,6 +401,17 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     ];
 
     const cart = { '1': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0 };
+    // ------------------------------------------------------------
+    // Anti-spam
+    // ------------------------------------------------------------
+    // Recorded once, when the page/script first runs, so we can tell
+    // apart a genuine customer (who takes at least a few seconds to
+    // browse the menu, fill in their name/phone, etc.) from a script
+    // that fills everything and submits instantly.
+    const PAGE_LOADED_AT = Date.now();
+    const MIN_CHECKOUT_SECONDS = 4;
+    const ORDER_COOLDOWN_SECONDS = 20;
+    const LAST_ORDER_STORAGE_KEY = 'lighture_last_order_at';
     let allOrders = [];
     let stockData = {};
     let isAdmin = false;
@@ -665,9 +698,28 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       document.getElementById('pin-input').focus();
     }
     function closePinModal() { document.getElementById('pin-modal').classList.add('hidden'); }
-    function verifyPin() {
-      if (document.getElementById('pin-input').value === ADMIN_PIN) { closePinModal(); toggleAdmin(); }
-      else { document.getElementById('pin-error').textContent = 'PIN salah.'; document.getElementById('pin-error').classList.remove('hidden'); document.getElementById('pin-input').value = ''; }
+    async function verifyPin() {
+      const pinInput = document.getElementById('pin-input');
+      const pin = pinInput.value;
+      const submitBtn = document.querySelector('#pin-modal button.bg-green-500');
+      const errorEl = document.getElementById('pin-error');
+      errorEl.classList.add('hidden');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Memeriksa...'; }
+      try {
+        // The PIN is sent straight to Firebase's own auth servers for
+        // verification - it is never compared or stored anywhere in this
+        // file, so it can't be read via "View Source" like before.
+        await firebaseAuth.signInWithEmailAndPassword(ADMIN_EMAIL, pin);
+        closePinModal();
+        toggleAdmin();
+      } catch (err) {
+        errorEl.textContent = 'PIN salah.';
+        errorEl.classList.remove('hidden');
+        pinInput.value = '';
+        pinInput.focus();
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Masuk'; }
+      }
     }
     document.getElementById('pin-input').addEventListener('keypress', e => { if (e.key === 'Enter') verifyPin(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePinModal(); closeProofModal(); } });
@@ -676,7 +728,15 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       isAdmin = !isAdmin;
       document.getElementById('customer-view').classList.toggle('hidden', isAdmin);
       document.getElementById('admin-view').classList.toggle('hidden', !isAdmin);
-      if (isAdmin) { renderAdmin(); updateReport(); }
+      if (isAdmin) {
+        // Only start reading orders after a real, verified admin login -
+        // this is the piece that actually keeps customer data private.
+        startOrdersListener();
+        renderStockTab();
+      } else {
+        stopOrdersListener();
+        firebaseAuth.signOut().catch(() => {});
+      }
     }
 
 
@@ -824,7 +884,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
         const order = allOrders.find(o => o.__backendId === actionBtn.dataset.id);
         if (!order) return;
         actionBtn.disabled = true; actionBtn.textContent = '...';
-        await window.dataSdk.update({ ...order, status: actionBtn.dataset.action });
+        await window.dataSdk.updateOrder({ ...order, status: actionBtn.dataset.action });
         return;
       }
       const deleteBtn = e.target.closest('.admin-delete');
@@ -832,7 +892,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
         const order = allOrders.find(o => o.__backendId === deleteBtn.dataset.id);
         if (!order) return;
         deleteBtn.disabled = true; deleteBtn.textContent = '...';
-        await window.dataSdk.delete(order);
+        await window.dataSdk.deleteOrder(order);
       }
     });
 
@@ -853,8 +913,8 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
           const itemId = e.target.dataset.itemId;
           const avail = e.target.checked;
           const stock = stockData[itemId];
-          if (stock) { const r = await window.dataSdk.update({...stock, available: avail}); if (!r.isOk) e.target.checked = !avail; }
-          else { const r = await window.dataSdk.create({ item_id: itemId, item_name: MENU.find(m=>m.id===itemId).name, available: avail, record_type: 'stock' }); if (!r.isOk) e.target.checked = !avail; }
+          if (stock) { const r = await window.dataSdk.updateStock({...stock, available: avail}); if (!r.isOk) e.target.checked = !avail; }
+          else { const r = await window.dataSdk.createStock({ item_id: itemId, item_name: MENU.find(m=>m.id===itemId).name, available: avail }); if (!r.isOk) e.target.checked = !avail; }
         });
       });
     }
@@ -906,21 +966,57 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       });
     }
 
-    // Data SDK
-    const handler = {
-      onDataChanged(data) {
-        allOrders = []; stockData = {};
-        data.forEach(record => {
-          if (record.record_type === 'order') allOrders.push(record);
-          else if (record.record_type === 'stock') stockData[record.item_id] = record;
-        });
-        allOrders.sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
-        updateMenuDisplay();
-        if (isAdmin) { renderAdmin(); updateReport(); renderStockTab(); }
-      }
-    };
+    // ------------------------------------------------------------
+    // Data listeners
+    // ------------------------------------------------------------
+    // Stock is public: every visitor's browser subscribes to it so
+    // sold-out badges show correctly, no login required.
+    let stockUnsubscribe = null;
+    function startStockListener() {
+      if (stockUnsubscribe) return;
+      stockUnsubscribe = firestoreDb.collection(STOCK_COLLECTION).onSnapshot(
+        (snapshot) => {
+          stockData = {};
+          snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            stockData[data.item_id] = { ...data, __backendId: doc.id };
+          });
+          updateMenuDisplay();
+          if (isAdmin) renderStockTab();
+        },
+        (error) => console.error('Stock listen error:', error)
+      );
+    }
 
-    (async () => { await window.dataSdk.init(handler); })();
+    // Orders are private: this listener is only started after a
+    // successful admin sign-in (see toggleAdmin/verifyPin above), and
+    // stopped again on logout. Firestore Security Rules enforce this on
+    // the server side too, so even calling this without being signed in
+    // would just get a permission-denied error and return no data.
+    let ordersUnsubscribe = null;
+    function startOrdersListener() {
+      if (ordersUnsubscribe) return;
+      ordersUnsubscribe = firestoreDb.collection(ORDERS_COLLECTION).onSnapshot(
+        (snapshot) => {
+          allOrders = snapshot.docs.map(doc => ({ ...doc.data(), __backendId: doc.id }));
+          allOrders.sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
+          renderAdmin();
+          updateReport();
+          renderStockTab();
+        },
+        (error) => {
+          console.error('Orders listen error:', error);
+          const container = document.getElementById('admin-orders');
+          if (container) container.innerHTML = '<p class="text-center text-red-500 text-sm py-6">Gagal memuat pesanan. Coba login ulang.</p>';
+        }
+      );
+    }
+    function stopOrdersListener() {
+      if (ordersUnsubscribe) { ordersUnsubscribe(); ordersUnsubscribe = null; }
+      allOrders = [];
+    }
+
+    startStockListener();
 
     // Filter apply button listener
     document.getElementById('filter-apply-btn').addEventListener('click', renderAdmin);
@@ -932,10 +1028,37 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       
       try {
         if (selectedPaymentMethod === 'qris' && !uploadedProofBlob) { showError('error-msg', 'Upload bukti pembayaran QRIS.'); return; }
+
+        // --- Anti-spam checks ---
+        // 1. Honeypot: a real customer never sees or fills this field.
+        //    If it's filled, silently pretend the order succeeded so a
+        //    bot doesn't learn it was detected and try to adapt.
+        const honeypot = document.getElementById('cust-website');
+        if (honeypot && honeypot.value.trim() !== '') {
+          goToStep(4);
+          return;
+        }
+        // 2. Too-fast submission: filling name/phone/items realistically
+        //    takes more than a few seconds. This is a soft check (shown
+        //    as a normal error) since an honest customer could rarely
+        //    trip it via browser autofill.
+        if (Date.now() - PAGE_LOADED_AT < MIN_CHECKOUT_SECONDS * 1000) {
+          showError('error-msg', 'Terjadi kesalahan, silakan coba lagi.');
+          return;
+        }
+        // 3. Per-browser cooldown: stop the same browser/device from
+        //    firing off many orders back-to-back.
+        try {
+          const lastOrderAt = Number(localStorage.getItem(LAST_ORDER_STORAGE_KEY) || 0);
+          const secondsSinceLast = (Date.now() - lastOrderAt) / 1000;
+          if (lastOrderAt && secondsSinceLast < ORDER_COOLDOWN_SECONDS) {
+            showError('error-msg', `Kamu baru saja memesan. Tunggu ${Math.ceil(ORDER_COOLDOWN_SECONDS - secondsSinceLast)} detik lagi ya.`);
+            return;
+          }
+        } catch (e) { /* localStorage unavailable - skip cooldown check */ }
+
         btn.disabled = true; btn.style.opacity = '0.5';
         btn.textContent = 'Mengirim...';
-        
-        if (allOrders.length >= 999) { showError('error-msg', 'Batas pesanan tercapai (999).'); btn.disabled = false; btn.style.opacity = '1'; btn.textContent = document.querySelector('[data-template-id="submit-btn"]')?.textContent || 'Kirim Pesanan'; return; }
 
         const items = MENU.filter(m => cart[m.id] > 0).map(m => m.name + ' x' + cart[m.id]).join(', ');
         const total = MENU.reduce((s, m) => s + cart[m.id] * m.price, 0);
@@ -945,7 +1068,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
 
         if (selectedPaymentMethod === 'cash') {
           // Cash payment - direct order creation without proof
-          const result = await window.dataSdk.create({
+          const result = await window.dataSdk.createOrder({
             customer_name: name, 
             phone_number: phone, 
             items_ordered: items,
@@ -962,6 +1085,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
           btn.disabled = false; btn.style.opacity = '1'; btn.textContent = document.querySelector('[data-template-id="submit-btn"]')?.textContent || 'Kirim Pesanan';
           
           if (result.isOk) {
+            try { localStorage.setItem(LAST_ORDER_STORAGE_KEY, String(Date.now())); } catch (e) {}
             let msg = `Pesanan Baru dari Lighture Drinks%0A%0A👤 ${encodeURIComponent(name)}%0A📞 ${encodeURIComponent(phone)}%0A%0A🛍️ ${encodeURIComponent(items)}%0A💰 Rp ${total.toLocaleString('id-ID')}%0A💵 Tunai`;
             if (notes) msg += `%0A📝 ${encodeURIComponent(notes)}`;
             window.open(`https://wa.me/6285172296255?text=${msg}`, '_blank');
@@ -989,13 +1113,13 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
               // image (base64 data URL) so admin can actually view the proof.
               const proofHash = generateHash(proofBase64);
 
-              if (!window.dataSdk || typeof window.dataSdk.create !== 'function') {
+              if (!window.dataSdk || typeof window.dataSdk.createOrder !== 'function') {
                 btn.disabled = false; btn.style.opacity = '1'; btn.textContent = document.querySelector('[data-template-id="submit-btn"]')?.textContent || 'Kirim Pesanan';
                 showError('error-msg', 'Koneksi ke server belum siap. Tunggu sebentar lalu coba kirim lagi.');
                 return;
               }
 
-              const result = await window.dataSdk.create({
+              const result = await window.dataSdk.createOrder({
                 customer_name: name, 
                 phone_number: phone, 
                 items_ordered: items,
@@ -1012,6 +1136,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
               btn.disabled = false; btn.style.opacity = '1'; btn.textContent = document.querySelector('[data-template-id="submit-btn"]')?.textContent || 'Kirim Pesanan';
               
               if (result.isOk) {
+                try { localStorage.setItem(LAST_ORDER_STORAGE_KEY, String(Date.now())); } catch (e) {}
                 let msg = `Pesanan Baru dari Lighture Drinks%0A%0A👤 ${encodeURIComponent(name)}%0A📞 ${encodeURIComponent(phone)}%0A%0A🛍️ ${encodeURIComponent(items)}%0A💰 Rp ${total.toLocaleString('id-ID')}%0A💳 QRIS`;
                 if (notes) msg += `%0A📝 ${encodeURIComponent(notes)}`;
                 window.open(`https://wa.me/6285172296255?text=${msg}`, '_blank');

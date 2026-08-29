@@ -50,6 +50,9 @@
        compromised (protects against a supply-chain attack altering the
        dynamic QRIS payload, e.g. redirecting payments to a different account). -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
+  <!-- Leaflet: free, open-source map for the delivery-location picker (uses OpenStreetMap tiles, no API key needed) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
  </head>
  <body data-template-id="__page-root" class="min-h-screen" style="background: linear-gradient(rgb(245, 230, 211), rgb(232, 217, 200));">
   <header class="text-center py-5">
@@ -155,6 +158,12 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
      <div>
       <label data-template-id="label-notes" class="canva-text text-sm font-medium" for="cust-notes" style="color: rgb(51, 51, 51); font-weight: 500; font-style: normal; font-size: 16px;">Catatan (Opsional)</label> <textarea id="cust-notes" rows="2" class="w-full mt-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-300"></textarea>
      </div>
+     <div>
+      <label class="canva-text text-sm font-medium" for="cust-address" style="color: rgb(51, 51, 51); font-weight: 500; font-style: normal; font-size: 16px;">Alamat Pengiriman</label>
+      <textarea id="cust-address" rows="2" class="w-full mt-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-300" placeholder="Nama jalan, nomor rumah, patokan..."></textarea>
+      <button type="button" id="pick-location-btn" class="w-full mt-2 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-medium border border-blue-200" onclick="openMapModal()">📍 Pilih Titik Lokasi di Peta</button>
+      <p id="delivery-distance-info" class="text-xs text-gray-500 mt-1"></p>
+     </div>
      <!-- Honeypot: hidden from real users via CSS + off-screen position + aria-hidden.
           Simple bots that auto-fill every form field will fill this in; humans never see it.
           If it has a value on submit, we quietly treat the order as spam. -->
@@ -200,38 +209,6 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     <div class="text-center py-8">
      <p data-template-id="success-text" class="canva-text font-bold text-lg" style="color: rgb(45, 106, 42); font-weight: 700; font-style: normal; font-size: 16px;">✅ Pesanan berhasil dikirim! Terima kasih.</p><button data-template-id="new-order-btn" type="button" class="canva-button mt-4 px-6 py-3 rounded-xl font-bold transition hover:opacity-90" onclick="resetOrder()" style="background: rgb(74, 124, 68); color: rgb(255, 255, 255); font-weight: 700; font-style: normal; font-size: 16px;">Pesan Lagi</button>
     </div>
-   </div><!-- IHSG Live Chart (just a little extra for visitors) -->
-   <div class="mt-8 p-4 rounded-xl bg-white/80 shadow-sm">
-    <h3 class="canva-text font-bold mb-2 text-center" style="color: rgb(45, 74, 42); font-weight: 700; font-style: normal; font-size: 16px;">📈 IHSG Live</h3>
-    <div class="tradingview-widget-container" style="height:300px;">
-     <div class="tradingview-widget-container__widget" style="height:100%;"></div>
-    </div>
-    <script src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
-    {
-      "symbols": [["IDX:COMPOSITE|1D"]],
-      "chartOnly": false,
-      "width": "100%",
-      "height": "300",
-      "locale": "id",
-      "colorTheme": "light",
-      "autosize": true,
-      "showVolume": false,
-      "showMA": false,
-      "hideDateRanges": false,
-      "hideMarketStatus": false,
-      "hideSymbolLogo": false,
-      "scalePosition": "right",
-      "scaleMode": "Normal",
-      "fontFamily": "-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif",
-      "fontSize": "10",
-      "noTimeScale": false,
-      "valuesTracking": "1",
-      "changeMode": "price-and-percent",
-      "lineWidth": 2,
-      "lineType": 0,
-      "dateRanges": ["1d|1", "1m|30", "3m|60", "12m|1D", "60m|1W", "all|1M"]
-    }
-    </script>
    </div><!-- Contact Center Section -->
    <div class="mt-8 p-4 rounded-xl bg-white/80 shadow-sm text-center border-t-2 border-green-200">
     <h3 data-template-id="contact-heading" class="canva-text font-bold mb-2" style="color: rgb(45, 74, 42); font-weight: 700; font-style: normal; font-size: 18px;">Hubungi Kami</h3>
@@ -367,6 +344,22 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     <button type="button" class="w-full mt-4 py-2 rounded-lg bg-gray-200 text-gray-800 font-medium" onclick="closeRedeemModal()">Tutup</button>
    </div>
   </div>
+  <!-- Delivery Location Map Picker Modal -->
+  <div id="map-modal" class="pin-modal hidden">
+   <div class="pin-modal-content" style="max-width:420px; width:95%;">
+    <h3 class="font-bold text-center mb-1">Pilih Titik Lokasi</h3>
+    <p class="text-xs text-gray-500 text-center mb-3">Cari alamat atau geser pin ke lokasi pengiriman kamu.</p>
+    <input id="map-search-input" type="text" placeholder="Cari nama jalan/tempat..." class="w-full px-3 py-2 border rounded-lg mb-2 focus:outline-none focus:ring-2 focus:ring-green-300">
+    <div id="map-search-results" class="mb-2 text-sm max-h-32 overflow-y-auto hidden"></div>
+    <div id="delivery-map" style="height: 280px; border-radius: 0.5rem;"></div>
+    <p id="map-distance-preview" class="text-sm text-center mt-2 font-medium text-gray-700"></p>
+    <div id="map-error" class="hidden mt-2 text-red-600 text-sm text-center"></div>
+    <div class="flex gap-3 mt-3">
+     <button type="button" class="flex-1 py-2 rounded-lg bg-gray-200 text-gray-800 font-medium" onclick="closeMapModal()">Batal</button>
+     <button type="button" class="flex-1 py-2 rounded-lg bg-green-500 text-white font-medium" onclick="confirmMapLocation()">Gunakan Titik Ini</button>
+    </div>
+   </div>
+  </div>
   <script>
     // ============================================================
     // Firebase Firestore + Auth backend
@@ -416,6 +409,34 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     const VOUCHER_CATALOG = [
       { code: 'YEY5RB', label: 'Diskon Rp5.000', cost: 70, discount: 5000 }
     ];
+
+    // Delivery distance config
+    // Measured from SMKN 10 Jakarta (Jl. SMEA 6 Mayjend Sutoyo, Cawang,
+    // Kramat Jati, Jakarta Timur) - the shop's reference point for
+    // calculating delivery distance.
+    const SHOP_LOCATION = { lat: -6.2558, lng: 106.8697 };
+    const FREE_DELIVERY_RADIUS_KM = 5;
+    const DELIVERY_FEE_PER_KM = 2000;
+
+    // Straight-line ("as the crow flies") distance in km between two
+    // lat/lng points. This is an estimate, not actual road distance -
+    // getting real driving distance would need a paid routing API.
+    function haversineDistanceKm(lat1, lng1, lat2, lng2) {
+      const R = 6371; // Earth radius in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLng / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function calcDeliveryFee(distanceKm) {
+      if (distanceKm <= FREE_DELIVERY_RADIUS_KM) return 0;
+      const excessKm = Math.ceil(distanceKm - FREE_DELIVERY_RADIUS_KM);
+      return excessKm * DELIVERY_FEE_PER_KM;
+    }
 
     window.dataSdk = {
       async createOrder(record) {
@@ -603,6 +624,13 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     let memberUnsubscribe = null;
     let vouchersUnsubscribe = null;
 
+    // Delivery location state
+    let deliveryLocation = null; // { lat, lng } confirmed by the customer
+    let deliveryDistanceKm = 0;
+    let mapInstance = null;
+    let mapMarker = null;
+    let mapPickedLatLng = null; // temp pick inside the modal, before confirming
+
     function updateTotal() {
       let total = 0;
       MENU.forEach(m => { total += cart[m.id] * m.price; });
@@ -648,22 +676,31 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       return MENU.reduce((s, m) => s + cart[m.id] * m.price, 0);
     }
 
+    function getDeliveryFee() {
+      return deliveryLocation ? calcDeliveryFee(deliveryDistanceKm) : 0;
+    }
+
     function getFinalTotal() {
       const raw = getCartTotal();
       const discount = selectedVoucher ? selectedVoucher.discount : 0;
-      return Math.max(0, raw - discount);
+      const deliveryFee = getDeliveryFee();
+      return Math.max(0, raw - discount) + deliveryFee;
     }
 
     function buildSummary() {
       const items = MENU.filter(m => cart[m.id] > 0);
       const rawTotal = getCartTotal();
       populateVoucherSelect();
+      const deliveryFee = getDeliveryFee();
       const finalTotal = getFinalTotal();
       let html = items.map(m =>
         `<div class="flex justify-between"><span>${m.name} x${cart[m.id]}</span><span>Rp ${(cart[m.id]*m.price).toLocaleString('id-ID')}</span></div>`
       ).join('');
       if (selectedVoucher) {
         html += `<div class="flex justify-between text-green-700"><span>🎟️ Voucher ${escapeHtml(selectedVoucher.code)}</span><span>-Rp ${selectedVoucher.discount.toLocaleString('id-ID')}</span></div>`;
+      }
+      if (deliveryLocation) {
+        html += `<div class="flex justify-between ${deliveryFee > 0 ? 'text-orange-600' : 'text-green-700'}"><span>🚚 Ongkir (~${deliveryDistanceKm.toFixed(1)} km)</span><span>${deliveryFee > 0 ? 'Rp ' + deliveryFee.toLocaleString('id-ID') : 'Gratis'}</span></div>`;
       }
       html += `<div class="border-t pt-1 mt-1 flex justify-between font-bold"><span>Total</span><span>Rp ${finalTotal.toLocaleString('id-ID')}</span></div>`;
       document.getElementById('order-summary').innerHTML = html;
@@ -1160,6 +1197,131 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       }
     }
 
+    // ============================================================
+    // Delivery location map picker (Leaflet + OpenStreetMap, free)
+    // ============================================================
+    function openMapModal() {
+      document.getElementById('map-modal').classList.remove('hidden');
+      document.getElementById('map-error').classList.add('hidden');
+      document.getElementById('map-search-results').classList.add('hidden');
+      document.getElementById('map-search-input').value = '';
+
+      // Start centered on the shop, or the customer's previously picked point.
+      const start = deliveryLocation || SHOP_LOCATION;
+      mapPickedLatLng = deliveryLocation ? { ...deliveryLocation } : null;
+      updateMapDistancePreview();
+
+      // Defer map init slightly so the modal is visible first (Leaflet
+      // needs a visible container with a real size to lay itself out).
+      setTimeout(() => {
+        if (!mapInstance) {
+          mapInstance = L.map('delivery-map').setView([start.lat, start.lng], 14);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+          }).addTo(mapInstance);
+
+          // Shop marker (fixed reference point, not draggable)
+          L.marker([SHOP_LOCATION.lat, SHOP_LOCATION.lng], {
+            icon: L.divIcon({ className: '', html: '🏪', iconSize: [24, 24] })
+          }).addTo(mapInstance).bindPopup('Lokasi Toko');
+
+          mapMarker = L.marker([start.lat, start.lng], { draggable: true }).addTo(mapInstance);
+          mapMarker.on('dragend', () => {
+            const pos = mapMarker.getLatLng();
+            mapPickedLatLng = { lat: pos.lat, lng: pos.lng };
+            updateMapDistancePreview();
+          });
+
+          mapInstance.on('click', (e) => {
+            mapMarker.setLatLng(e.latlng);
+            mapPickedLatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+            updateMapDistancePreview();
+          });
+        } else {
+          mapInstance.invalidateSize();
+          mapInstance.setView([start.lat, start.lng], 14);
+          mapMarker.setLatLng([start.lat, start.lng]);
+        }
+      }, 100);
+    }
+
+    function closeMapModal() {
+      document.getElementById('map-modal').classList.add('hidden');
+    }
+
+    function updateMapDistancePreview() {
+      const el = document.getElementById('map-distance-preview');
+      if (!mapPickedLatLng) { el.textContent = ''; return; }
+      const dist = haversineDistanceKm(SHOP_LOCATION.lat, SHOP_LOCATION.lng, mapPickedLatLng.lat, mapPickedLatLng.lng);
+      const fee = calcDeliveryFee(dist);
+      el.textContent = `Jarak dari toko: ~${dist.toFixed(1)} km` + (fee > 0 ? ` • Ongkir: Rp ${fee.toLocaleString('id-ID')}` : ' • Gratis ongkir');
+    }
+
+    function confirmMapLocation() {
+      const errorEl = document.getElementById('map-error');
+      if (!mapPickedLatLng) {
+        errorEl.textContent = 'Pilih titik lokasi dulu di peta (klik atau geser pin).';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      deliveryLocation = { ...mapPickedLatLng };
+      deliveryDistanceKm = haversineDistanceKm(SHOP_LOCATION.lat, SHOP_LOCATION.lng, deliveryLocation.lat, deliveryLocation.lng);
+      updateDeliveryInfoLabel();
+      closeMapModal();
+    }
+
+    function updateDeliveryInfoLabel() {
+      const el = document.getElementById('delivery-distance-info');
+      if (!deliveryLocation) { el.textContent = ''; return; }
+      const fee = calcDeliveryFee(deliveryDistanceKm);
+      el.textContent = `📍 Titik lokasi tersimpan • ~${deliveryDistanceKm.toFixed(1)} km dari toko` +
+        (fee > 0 ? ` • Ongkir tambahan: Rp ${fee.toLocaleString('id-ID')}` : ' • Gratis ongkir');
+      el.className = fee > 0 ? 'text-xs text-orange-600 mt-1 font-medium' : 'text-xs text-green-600 mt-1 font-medium';
+    }
+
+    // Address search via Nominatim (OpenStreetMap's free geocoding service).
+    // Debounced so we don't hammer the API on every keystroke - please keep
+    // usage light, Nominatim's public instance is a shared free resource.
+    let mapSearchTimer = null;
+    document.getElementById('map-search-input').addEventListener('input', (e) => {
+      clearTimeout(mapSearchTimer);
+      const query = e.target.value.trim();
+      const resultsEl = document.getElementById('map-search-results');
+      if (query.length < 3) { resultsEl.classList.add('hidden'); resultsEl.innerHTML = ''; return; }
+      mapSearchTimer = setTimeout(async () => {
+        try {
+          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=id&q=${encodeURIComponent(query)}`;
+          const res = await fetch(url, { headers: { 'Accept-Language': 'id' } });
+          const results = await res.json();
+          if (!results.length) {
+            resultsEl.innerHTML = '<p class="text-xs text-gray-400 p-2">Tidak ditemukan.</p>';
+            resultsEl.classList.remove('hidden');
+            return;
+          }
+          resultsEl.innerHTML = results.map((r, i) =>
+            `<button type="button" class="map-search-result-item w-full text-left p-2 hover:bg-gray-50 border-b text-xs" data-lat="${r.lat}" data-lng="${r.lon}">${escapeHtml(r.display_name)}</button>`
+          ).join('');
+          resultsEl.classList.remove('hidden');
+        } catch (err) {
+          resultsEl.innerHTML = '<p class="text-xs text-red-400 p-2">Pencarian gagal, coba lagi.</p>';
+          resultsEl.classList.remove('hidden');
+        }
+      }, 600);
+    });
+    document.getElementById('map-search-results').addEventListener('click', (e) => {
+      const btn = e.target.closest('.map-search-result-item');
+      if (!btn) return;
+      const lat = parseFloat(btn.dataset.lat), lng = parseFloat(btn.dataset.lng);
+      mapPickedLatLng = { lat, lng };
+      if (mapInstance && mapMarker) {
+        mapInstance.setView([lat, lng], 16);
+        mapMarker.setLatLng([lat, lng]);
+      }
+      updateMapDistancePreview();
+      document.getElementById('map-search-results').classList.add('hidden');
+    });
+
 
 
     function renderAdmin() {
@@ -1209,11 +1371,23 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
           loyaltyInfo = `<p class="text-xs text-blue-600 mt-1">${parts.join(' • ')}</p>`;
         }
 
+        let deliveryInfo = '';
+        if (order.delivery_address || order.delivery_lat) {
+          const mapLink = (order.delivery_lat && order.delivery_lng)
+            ? `<a href="https://www.google.com/maps?q=${order.delivery_lat},${order.delivery_lng}" target="_blank" rel="noopener noreferrer" class="underline text-blue-600">Lihat di Maps</a>`
+            : '';
+          deliveryInfo = `<p class="text-xs text-gray-600 mt-1">🚚 ${escapeHtml(order.delivery_address || '(alamat tidak diisi)')}` +
+            (order.delivery_distance_km != null ? ` • ~${order.delivery_distance_km} km` : '') +
+            (order.delivery_fee ? ` • Ongkir Rp ${Number(order.delivery_fee).toLocaleString('id-ID')}` : '') +
+            (mapLink ? ` • ${mapLink}` : '') + `</p>`;
+        }
+
         return `<div class="p-3 rounded-xl bg-white shadow-sm">
           <div class="flex justify-between items-start"><div><strong>${escapeHtml(order.customer_name)}</strong><br><span class="text-xs text-gray-500">${escapeHtml(order.phone_number)}</span><br><span class="text-xs text-gray-400">📅 ${dateStr}</span></div>
           <div class="flex flex-col gap-1 items-end"><span class="text-xs px-2 py-0.5 rounded-full ${sc[order.status] || sc.pending}">${st[order.status] || st.pending}</span><span class="text-xs px-2 py-0.5 rounded-full ${order.payment_method==='qris'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}">${order.payment_method==='qris'?'💳 QRIS':'💵 Tunai'}</span></div></div>
           <p class="text-sm mt-1">${escapeHtml(order.items_ordered)}</p><p class="text-sm font-bold">Rp ${Number(order.total_price).toLocaleString('id-ID')}</p>
           ${loyaltyInfo}
+          ${deliveryInfo}
           ${proofSection}
           ${order.notes ? `<p class="text-xs text-gray-600 mt-2">${escapeHtml(order.notes)}</p>` : ''}
           ${buttons}
@@ -1517,7 +1691,9 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
         const name = document.getElementById('cust-name').value.trim();
         const phone = document.getElementById('cust-phone').value.trim();
         const notes = document.getElementById('cust-notes').value.trim();
+        const address = document.getElementById('cust-address').value.trim();
         const memberPhoneForOrder = currentMember ? currentMember.__backendId : '';
+        const deliveryFeeForOrder = getDeliveryFee();
 
         if (selectedPaymentMethod === 'cash') {
           // Cash payment - direct order creation without proof
@@ -1535,7 +1711,12 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
             record_type: 'order',
             member_phone: memberPhoneForOrder,
             voucher_code: voucherUsedForThisOrder ? voucherUsedForThisOrder.code : '',
-            points_awarded: false
+            points_awarded: false,
+            delivery_address: address,
+            delivery_lat: deliveryLocation ? deliveryLocation.lat : null,
+            delivery_lng: deliveryLocation ? deliveryLocation.lng : null,
+            delivery_distance_km: deliveryLocation ? Number(deliveryDistanceKm.toFixed(2)) : null,
+            delivery_fee: deliveryFeeForOrder
           });
           
           btn.disabled = false; btn.style.opacity = '1'; btn.textContent = document.querySelector('[data-template-id="submit-btn"]')?.textContent || 'Kirim Pesanan';
@@ -1547,6 +1728,8 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
               selectedVoucher = null;
             }
             let msg = `Pesanan Baru dari Lighture Drinks%0A%0A👤 ${encodeURIComponent(name)}%0A📞 ${encodeURIComponent(phone)}%0A%0A🛍️ ${encodeURIComponent(items)}%0A💰 Rp ${total.toLocaleString('id-ID')}%0A💵 Tunai`;
+            if (address) msg += `%0A📍 ${encodeURIComponent(address)}`;
+            if (deliveryFeeForOrder > 0) msg += `%0A🚚 Ongkir: Rp ${deliveryFeeForOrder.toLocaleString('id-ID')} (~${deliveryDistanceKm.toFixed(1)} km)`;
             if (notes) msg += `%0A📝 ${encodeURIComponent(notes)}`;
             window.open(`https://wa.me/6285172296255?text=${msg}`, '_blank');
             goToStep(4);
@@ -1593,7 +1776,12 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
                 record_type: 'order',
                 member_phone: memberPhoneForOrder,
                 voucher_code: voucherUsedForThisOrder ? voucherUsedForThisOrder.code : '',
-                points_awarded: false
+                points_awarded: false,
+                delivery_address: address,
+                delivery_lat: deliveryLocation ? deliveryLocation.lat : null,
+                delivery_lng: deliveryLocation ? deliveryLocation.lng : null,
+                delivery_distance_km: deliveryLocation ? Number(deliveryDistanceKm.toFixed(2)) : null,
+                delivery_fee: deliveryFeeForOrder
               });
               
               btn.disabled = false; btn.style.opacity = '1'; btn.textContent = document.querySelector('[data-template-id="submit-btn"]')?.textContent || 'Kirim Pesanan';
@@ -1605,6 +1793,8 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
                   selectedVoucher = null;
                 }
                 let msg = `Pesanan Baru dari Lighture Drinks%0A%0A👤 ${encodeURIComponent(name)}%0A📞 ${encodeURIComponent(phone)}%0A%0A🛍️ ${encodeURIComponent(items)}%0A💰 Rp ${total.toLocaleString('id-ID')}%0A💳 QRIS`;
+                if (address) msg += `%0A📍 ${encodeURIComponent(address)}`;
+                if (deliveryFeeForOrder > 0) msg += `%0A🚚 Ongkir: Rp ${deliveryFeeForOrder.toLocaleString('id-ID')} (~${deliveryDistanceKm.toFixed(1)} km)`;
                 if (notes) msg += `%0A📝 ${encodeURIComponent(notes)}`;
                 window.open(`https://wa.me/6285172296255?text=${msg}`, '_blank');
                 goToStep(4);
@@ -1634,11 +1824,15 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       document.getElementById('cust-name').value = '';
       document.getElementById('cust-phone').value = '';
       document.getElementById('cust-notes').value = '';
+      document.getElementById('cust-address').value = '';
+      document.getElementById('delivery-distance-info').textContent = '';
       document.getElementById('proof-upload').value = '';
       document.getElementById('proof-name').textContent = '';
       uploadedProofBlob = null;
       selectedPaymentMethod = 'qris';
       selectedVoucher = null;
+      deliveryLocation = null;
+      deliveryDistanceKm = 0;
       goToStep(1);
     }
 

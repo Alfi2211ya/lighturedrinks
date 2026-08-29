@@ -35,7 +35,12 @@ service cloud.firestore {
         (!('payment_proof_data' in request.resource.data) || (request.resource.data.payment_proof_data is string && request.resource.data.payment_proof_data.size() <= 400000)) &&
         (!('member_phone' in request.resource.data) || (request.resource.data.member_phone is string && request.resource.data.member_phone.size() <= 20)) &&
         (!('voucher_code' in request.resource.data) || (request.resource.data.voucher_code is string && request.resource.data.voucher_code.size() <= 20)) &&
-        (!('points_awarded' in request.resource.data) || request.resource.data.points_awarded == false);
+        (!('points_awarded' in request.resource.data) || request.resource.data.points_awarded == false) &&
+        (!('delivery_address' in request.resource.data) || (request.resource.data.delivery_address is string && request.resource.data.delivery_address.size() <= 300)) &&
+        (!('delivery_lat' in request.resource.data) || request.resource.data.delivery_lat == null || (request.resource.data.delivery_lat is number && request.resource.data.delivery_lat >= -90 && request.resource.data.delivery_lat <= 90)) &&
+        (!('delivery_lng' in request.resource.data) || request.resource.data.delivery_lng == null || (request.resource.data.delivery_lng is number && request.resource.data.delivery_lng >= -180 && request.resource.data.delivery_lng <= 180)) &&
+        (!('delivery_distance_km' in request.resource.data) || request.resource.data.delivery_distance_km == null || (request.resource.data.delivery_distance_km is number && request.resource.data.delivery_distance_km >= 0 && request.resource.data.delivery_distance_km <= 200)) &&
+        (!('delivery_fee' in request.resource.data) || (request.resource.data.delivery_fee is number && request.resource.data.delivery_fee >= 0 && request.resource.data.delivery_fee <= 1000000));
     }
 
     // Loyalty members: identified by phone number (used as the doc ID).

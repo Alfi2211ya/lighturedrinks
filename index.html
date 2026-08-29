@@ -434,7 +434,9 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
 
     function calcDeliveryFee(distanceKm) {
       if (distanceKm <= FREE_DELIVERY_RADIUS_KM) return 0;
-      const excessKm = Math.ceil(distanceKm - FREE_DELIVERY_RADIUS_KM);
+      // Standard rounding: fraction >= 0.5 rounds up, otherwise rounds down.
+      // (Previously always rounded up regardless of the fraction.)
+      const excessKm = Math.round(distanceKm - FREE_DELIVERY_RADIUS_KM);
       return excessKm * DELIVERY_FEE_PER_KM;
     }
 

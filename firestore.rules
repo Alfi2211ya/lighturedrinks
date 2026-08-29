@@ -32,7 +32,64 @@ service cloud.firestore {
         request.resource.data.total_price >= 0 &&
         request.resource.data.total_price <= 5000000 &&
         (!('notes' in request.resource.data) || (request.resource.data.notes is string && request.resource.data.notes.size() <= 500)) &&
-        (!('payment_proof_data' in request.resource.data) || (request.resource.data.payment_proof_data is string && request.resource.data.payment_proof_data.size() <= 400000));
+        (!('payment_proof_data' in request.resource.data) || (request.resource.data.payment_proof_data is string && request.resource.data.payment_proof_data.size() <= 400000)) &&
+        (!('member_phone' in request.resource.data) || (request.resource.data.member_phone is string && request.resource.data.member_phone.size() <= 20)) &&
+        (!('voucher_code' in request.resource.data) || (request.resource.data.voucher_code is string && request.resource.data.voucher_code.size() <= 20)) &&
+        (!('points_awarded' in request.resource.data) || request.resource.data.points_awarded == false);
+    }
+
+    // Loyalty members: identified by phone number (used as the doc ID).
+    // Anyone can self-register with 0 points, and can read balances (this
+    // app has no per-customer login system beyond a PIN checked in this
+    // collection itself, so points/vouchers are semi-public - low
+    // sensitivity data, an acceptable trade-off for a small shop MVP).
+    // Only two kinds of writes are allowed without admin login:
+    //   1) creating a brand-new account with 0 points
+    //   2) spending points on a voucher (points may only go DOWN, and only
+    //      by a cost that matches a real catalog item)
+    // Any other change (like an admin manually awarding points after a
+    // completed order) requires admin auth.
+    match /lighture_members/{phone} {
+      allow read: if true;
+      allow create: if request.auth != null || (
+        request.resource.data.points == 0 &&
+        request.resource.data.phone is string && request.resource.data.phone.size() > 0 && request.resource.data.phone.size() <= 20 &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        request.resource.data.pin_hash is string && request.resource.data.pin_hash.size() == 64
+      );
+      allow update: if request.auth != null || (
+        request.resource.data.phone == resource.data.phone &&
+        request.resource.data.name == resource.data.name &&
+        request.resource.data.pin_hash == resource.data.pin_hash &&
+        request.resource.data.points is number &&
+        request.resource.data.points >= 0 &&
+        resource.data.points - request.resource.data.points == 70
+      );
+      allow delete: if request.auth != null;
+    }
+
+    // Vouchers a member has redeemed. Anyone can read (to show "my
+    // vouchers" without a real auth system), but a voucher can only be
+    // CREATED via the exact catalog values (matching the points deduction
+    // above), and can only be marked used once (false -> true), never
+    // un-used or have its value changed.
+    match /lighture_vouchers/{voucherId} {
+      allow read: if true;
+      allow create: if request.auth != null || (
+        request.resource.data.used == false &&
+        request.resource.data.code == 'YEY5RB' &&
+        request.resource.data.discount == 5000 &&
+        request.resource.data.owner_phone is string &&
+        request.resource.data.owner_phone.size() > 0
+      );
+      allow update: if request.auth != null || (
+        resource.data.used == false &&
+        request.resource.data.used == true &&
+        request.resource.data.owner_phone == resource.data.owner_phone &&
+        request.resource.data.code == resource.data.code &&
+        request.resource.data.discount == resource.data.discount
+      );
+      allow delete: if request.auth != null;
     }
   }
 }

@@ -45,7 +45,11 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <!-- QR code generator (client-side), used to build the dynamic QRIS code with the order total embedded -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <!-- Subresource Integrity: the browser will refuse to run this file if its
+       content ever differs from what we verified, even if the CDN itself is
+       compromised (protects against a supply-chain attack altering the
+       dynamic QRIS payload, e.g. redirecting payments to a different account). -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
  </head>
  <body data-template-id="__page-root" class="min-h-screen" style="background: linear-gradient(rgb(245, 230, 211), rgb(232, 217, 200));">
   <header class="text-center py-5">
@@ -478,6 +482,15 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     // the Point-of-Initiation-Method field (tag 01) from "11"
     // (static) to "12" (dynamic), then recompute the CRC16 checksum
     // (tag 63) that every QRIS code must end with.
+    //
+    // SECURITY: buildDynamicQrisPayload() below only ever touches tags
+    // 01 (POI method) and 54 (amount). Every other field - including
+    // the merchant/NMID identity blocks (26, 51, 59, 60) that determine
+    // WHERE the money actually goes - is copied through untouched from
+    // QRIS_BASE_PAYLOAD. If this file's content itself hasn't been
+    // tampered with (see the GitHub repo's commit history + the
+    // Subresource Integrity lock on the QR library below), the payment
+    // destination can't be silently redirected by this feature.
     // ============================================================
     const QRIS_BASE_PAYLOAD = "00020101021126610016ID.CO.SHOPEE.WWW01189360091800228744760208228744760303UMI51440014ID.CO.QRIS.WWW0215ID10265007567410303UMI5204594553033605802ID5907PiStore6013JAKARTA TIMUR61051363062070703A0163042B88";
 

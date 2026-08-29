@@ -73,6 +73,19 @@ service cloud.firestore {
     // CREATED via the exact catalog values (matching the points deduction
     // above), and can only be marked used once (false -> true), never
     // un-used or have its value changed.
+    //
+    // SECURITY NOTE: the create rule also checks the member's CURRENT
+    // points balance via get() so a voucher can't be minted for a phone
+    // number with insufficient points, even if someone calls the Firestore
+    // API directly instead of going through the website. This doesn't
+    // make redemption fully atomic (a sufficiently technical user could
+    // still replay a create call without the paired points-deduction
+    // update and mint more than one voucher off the same balance) - truly
+    // closing that would need server-side logic (Cloud Functions), which
+    // this static-site architecture doesn't have. Given the low value at
+    // stake (a Rp5.000 discount), this is treated as an accepted,
+    // disclosed limitation rather than something worth adding a paid
+    // backend for right now.
     match /lighture_vouchers/{voucherId} {
       allow read: if true;
       allow create: if request.auth != null || (
@@ -80,7 +93,8 @@ service cloud.firestore {
         request.resource.data.code == 'YEY5RB' &&
         request.resource.data.discount == 5000 &&
         request.resource.data.owner_phone is string &&
-        request.resource.data.owner_phone.size() > 0
+        request.resource.data.owner_phone.size() > 0 &&
+        get(/databases/$(database)/documents/lighture_members/$(request.resource.data.owner_phone)).data.points >= 70
       );
       allow update: if request.auth != null || (
         resource.data.used == false &&

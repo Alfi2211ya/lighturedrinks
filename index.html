@@ -629,6 +629,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     // Delivery location state
     let deliveryLocation = null; // { lat, lng } confirmed by the customer
     let deliveryDistanceKm = 0;
+    let deliveryDistanceIsEstimate = false; // true if OSRM routing failed and we fell back to straight-line estimate
     let mapInstance = null;
     let mapMarker = null;
     let mapPickedLatLng = null; // temp pick inside the modal, before confirming
@@ -1255,21 +1256,63 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     function updateMapDistancePreview() {
       const el = document.getElementById('map-distance-preview');
       if (!mapPickedLatLng) { el.textContent = ''; return; }
+      // Fast straight-line estimate for live feedback while dragging/clicking -
+      // the accurate road-distance lookup only happens once, on confirm, so
+      // we don't hammer the routing API on every mouse movement.
       const dist = haversineDistanceKm(SHOP_LOCATION.lat, SHOP_LOCATION.lng, mapPickedLatLng.lat, mapPickedLatLng.lng);
       const fee = calcDeliveryFee(dist);
-      el.textContent = `Jarak dari toko: ~${dist.toFixed(1)} km` + (fee > 0 ? ` • Ongkir: Rp ${fee.toLocaleString('id-ID')}` : ' • Gratis ongkir');
+      el.textContent = `Perkiraan jarak: ~${dist.toFixed(1)} km` + (fee > 0 ? ` • Ongkir: ~Rp ${fee.toLocaleString('id-ID')}` : ' • Gratis ongkir') + ' (jarak akurat dihitung saat konfirmasi)';
     }
 
-    function confirmMapLocation() {
+    // Real driving-route distance via OSRM (Open Source Routing Machine),
+    // a free routing engine built on OpenStreetMap road data - this follows
+    // actual roads instead of a straight line "as the crow flies".
+    // OSRM's public demo server has no API key, but is meant for light,
+    // reasonable use with no uptime guarantee - so if it's slow, blocked, or
+    // down, we fall back to the straight-line distance multiplied by a
+    // typical road-detour factor (1.3x) rather than leaving the customer
+    // stuck without a distance/fee at all.
+    const OSRM_ROAD_DETOUR_FALLBACK_FACTOR = 1.3;
+    async function getRoadDistanceKm(lat1, lng1, lat2, lng2) {
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${lng1},${lat1};${lng2},${lat2}?overview=false`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
+        const data = await res.json();
+        if (data.code === 'Ok' && data.routes && data.routes[0]) {
+          return { km: data.routes[0].distance / 1000, isRoadDistance: true };
+        }
+        throw new Error('no-route');
+      } catch (err) {
+        // Fallback: straight-line distance is always shorter than the real
+        // road route, so we scale it up by a rough average detour factor.
+        const straightLine = haversineDistanceKm(lat1, lng1, lat2, lng2);
+        return { km: straightLine * OSRM_ROAD_DETOUR_FALLBACK_FACTOR, isRoadDistance: false };
+      }
+    }
+
+    async function confirmMapLocation() {
       const errorEl = document.getElementById('map-error');
+      errorEl.classList.add('hidden');
       if (!mapPickedLatLng) {
         errorEl.textContent = 'Pilih titik lokasi dulu di peta (klik atau geser pin).';
         errorEl.classList.remove('hidden');
         return;
       }
-      deliveryLocation = { ...mapPickedLatLng };
-      deliveryDistanceKm = haversineDistanceKm(SHOP_LOCATION.lat, SHOP_LOCATION.lng, deliveryLocation.lat, deliveryLocation.lng);
+      const confirmBtn = document.querySelector('#map-modal button.bg-green-500');
+      if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Menghitung rute...'; }
+
+      const picked = { ...mapPickedLatLng };
+      const result = await getRoadDistanceKm(SHOP_LOCATION.lat, SHOP_LOCATION.lng, picked.lat, picked.lng);
+
+      deliveryLocation = picked;
+      deliveryDistanceKm = result.km;
+      deliveryDistanceIsEstimate = !result.isRoadDistance;
       updateDeliveryInfoLabel();
+
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Gunakan Titik Ini'; }
       closeMapModal();
     }
 
@@ -1277,7 +1320,8 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       const el = document.getElementById('delivery-distance-info');
       if (!deliveryLocation) { el.textContent = ''; return; }
       const fee = calcDeliveryFee(deliveryDistanceKm);
-      el.textContent = `📍 Titik lokasi tersimpan • ~${deliveryDistanceKm.toFixed(1)} km dari toko` +
+      const distanceLabel = deliveryDistanceIsEstimate ? `~${deliveryDistanceKm.toFixed(1)} km (estimasi)` : `${deliveryDistanceKm.toFixed(1)} km (rute jalan)`;
+      el.textContent = `📍 Titik lokasi tersimpan • ${distanceLabel} dari toko` +
         (fee > 0 ? ` • Ongkir tambahan: Rp ${fee.toLocaleString('id-ID')}` : ' • Gratis ongkir');
       el.className = fee > 0 ? 'text-xs text-orange-600 mt-1 font-medium' : 'text-xs text-green-600 mt-1 font-medium';
     }
@@ -1378,8 +1422,11 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
           const mapLink = (order.delivery_lat && order.delivery_lng)
             ? `<a href="https://www.google.com/maps?q=${order.delivery_lat},${order.delivery_lng}" target="_blank" rel="noopener noreferrer" class="underline text-blue-600">Lihat di Maps</a>`
             : '';
+          const distanceLabel = order.delivery_distance_km != null
+            ? ` • ${order.delivery_distance_km} km${order.delivery_distance_is_estimate ? ' (estimasi)' : ' (rute jalan)'}`
+            : '';
           deliveryInfo = `<p class="text-xs text-gray-600 mt-1">🚚 ${escapeHtml(order.delivery_address || '(alamat tidak diisi)')}` +
-            (order.delivery_distance_km != null ? ` • ~${order.delivery_distance_km} km` : '') +
+            distanceLabel +
             (order.delivery_fee ? ` • Ongkir Rp ${Number(order.delivery_fee).toLocaleString('id-ID')}` : '') +
             (mapLink ? ` • ${mapLink}` : '') + `</p>`;
         }
@@ -1718,6 +1765,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
             delivery_lat: deliveryLocation ? deliveryLocation.lat : null,
             delivery_lng: deliveryLocation ? deliveryLocation.lng : null,
             delivery_distance_km: deliveryLocation ? Number(deliveryDistanceKm.toFixed(2)) : null,
+            delivery_distance_is_estimate: deliveryLocation ? deliveryDistanceIsEstimate : null,
             delivery_fee: deliveryFeeForOrder
           });
           
@@ -1783,6 +1831,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
                 delivery_lat: deliveryLocation ? deliveryLocation.lat : null,
                 delivery_lng: deliveryLocation ? deliveryLocation.lng : null,
                 delivery_distance_km: deliveryLocation ? Number(deliveryDistanceKm.toFixed(2)) : null,
+            delivery_distance_is_estimate: deliveryLocation ? deliveryDistanceIsEstimate : null,
                 delivery_fee: deliveryFeeForOrder
               });
               
@@ -1835,6 +1884,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       selectedVoucher = null;
       deliveryLocation = null;
       deliveryDistanceKm = 0;
+      deliveryDistanceIsEstimate = false;
       goToStep(1);
     }
 

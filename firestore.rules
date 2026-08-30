@@ -40,6 +40,7 @@ service cloud.firestore {
         (!('delivery_lat' in request.resource.data) || request.resource.data.delivery_lat == null || (request.resource.data.delivery_lat is number && request.resource.data.delivery_lat >= -90 && request.resource.data.delivery_lat <= 90)) &&
         (!('delivery_lng' in request.resource.data) || request.resource.data.delivery_lng == null || (request.resource.data.delivery_lng is number && request.resource.data.delivery_lng >= -180 && request.resource.data.delivery_lng <= 180)) &&
         (!('delivery_distance_km' in request.resource.data) || request.resource.data.delivery_distance_km == null || (request.resource.data.delivery_distance_km is number && request.resource.data.delivery_distance_km >= 0 && request.resource.data.delivery_distance_km <= 200)) &&
+        (!('delivery_distance_is_estimate' in request.resource.data) || request.resource.data.delivery_distance_is_estimate == null || request.resource.data.delivery_distance_is_estimate is bool) &&
         (!('delivery_fee' in request.resource.data) || (request.resource.data.delivery_fee is number && request.resource.data.delivery_fee >= 0 && request.resource.data.delivery_fee <= 1000000));
     }
 

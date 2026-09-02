@@ -396,7 +396,17 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
     const STOCK_COLLECTION = 'lighture_stock';
     const ORDERS_COLLECTION = 'lighture_orders';
     const MEMBERS_COLLECTION = 'lighture_members';
-    const VOUCHERS_COLLECTION = 'lighture_vouchers';
+    // Vouchers live in a SUBCOLLECTION under each member document
+    // (lighture_members/{phone}/vouchers/{voucherId}) rather than one flat
+    // top-level collection. This matters for privacy: a flat collection
+    // with open read access lets anyone query and download every
+    // customer's phone number in a single request. Scoping vouchers under
+    // their owning member's document means you'd have to already know a
+    // specific phone number to look up that phone's vouchers - you can no
+    // longer list "every voucher for every customer" in one shot.
+    function voucherCollectionFor(phone) {
+      return firestoreDb.collection(MEMBERS_COLLECTION).doc(phone).collection('vouchers');
+    }
     // Not a real inbox - just a fixed identifier Firebase Auth uses to tell
     // "the admin account" apart. The PIN typed in the UI is sent as the
     // password straight to Firebase's servers over HTTPS; it is never
@@ -540,7 +550,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
           const batch = firestoreDb.batch();
           const memberRef = firestoreDb.collection(MEMBERS_COLLECTION).doc(member.__backendId);
           batch.update(memberRef, { points: member.points - catalogItem.cost });
-          const voucherRef = firestoreDb.collection(VOUCHERS_COLLECTION).doc();
+          const voucherRef = voucherCollectionFor(member.__backendId).doc();
           batch.set(voucherRef, {
             owner_phone: member.__backendId,
             code: catalogItem.code,
@@ -557,7 +567,8 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
       },
       async markVoucherUsed(voucher) {
         try {
-          await firestoreDb.collection(VOUCHERS_COLLECTION).doc(voucher.__backendId).update({ used: true });
+          if (!voucher.owner_phone) throw new Error('Voucher tidak punya data pemilik.');
+          await voucherCollectionFor(voucher.owner_phone).doc(voucher.__backendId).update({ used: true });
           return { isOk: true };
         } catch (err) {
           return { isOk: false, error: { message: err.message } };
@@ -1123,8 +1134,7 @@ Botol 250ml</span> <span data-template-id="item7-desc" class="canva-text text-xs
         (err) => console.error('Member listen error:', err)
       );
       if (vouchersUnsubscribe) vouchersUnsubscribe();
-      vouchersUnsubscribe = firestoreDb.collection(VOUCHERS_COLLECTION)
-        .where('owner_phone', '==', currentMember.__backendId)
+      vouchersUnsubscribe = voucherCollectionFor(currentMember.__backendId)
         .where('used', '==', false)
         .onSnapshot(
           (snapshot) => {

@@ -4,15 +4,16 @@ service cloud.firestore {
 
     // Stock: everyone can read (needed to show "Habis" badges to every
     // visitor), but only an authenticated admin session can change it.
+    // No customer PII here, so open read/list is fine.
     match /lighture_stock/{itemId} {
       allow read: if true;
       allow write: if request.auth != null;
     }
 
-    // Orders: anyone can CREATE one (guest checkout), but reading,
-    // updating, or deleting an existing order requires admin login.
-    // The create rule also rejects malformed/oversized/fake-status
-    // submissions as a basic anti-abuse layer.
+    // Orders: contain customer_name, phone_number, delivery address/lat/lng
+    // - the most sensitive data in this app. Anyone can CREATE one (guest
+    // checkout), but reading (get OR list), updating, or deleting requires
+    // admin login. This is the main thing keeping customer PII private.
     match /lighture_orders/{orderId} {
       allow read, update, delete: if request.auth != null;
 
@@ -45,18 +46,22 @@ service cloud.firestore {
     }
 
     // Loyalty members: identified by phone number (used as the doc ID).
-    // Anyone can self-register with 0 points, and can read balances (this
-    // app has no per-customer login system beyond a PIN checked in this
-    // collection itself, so points/vouchers are semi-public - low
-    // sensitivity data, an acceptable trade-off for a small shop MVP).
-    // Only two kinds of writes are allowed without admin login:
-    //   1) creating a brand-new account with 0 points
-    //   2) spending points on a voucher (points may only go DOWN, and only
-    //      by a cost that matches a real catalog item)
-    // Any other change (like an admin manually awarding points after a
-    // completed order) requires admin auth.
+    // This app has no per-customer Firebase Auth login - a customer's own
+    // browser needs to read/write its OWN member doc without being signed
+    // in, so full admin-only lock-down isn't possible here.
+    //
+    // SECURITY: `get` (look up ONE specific phone number you already know)
+    // is allowed, but `list` (query/enumerate the WHOLE collection) is
+    // explicitly denied. This is the key fix - without this split, an
+    // open collection-level read lets anyone download every registered
+    // customer's name and phone number in a single request, with no need
+    // to guess anything. Requiring the exact phone number up front is a
+    // meaningfully narrower exposure (someone would have to already know
+    // or brute-force individual numbers), even though it's not perfect
+    // without a real per-customer authentication system.
     match /lighture_members/{phone} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       allow create: if request.auth != null || (
         request.resource.data.points == 0 &&
         request.resource.data.phone is string && request.resource.data.phone.size() > 0 && request.resource.data.phone.size() <= 20 &&
@@ -72,44 +77,30 @@ service cloud.firestore {
         resource.data.points - request.resource.data.points == 70
       );
       allow delete: if request.auth != null;
-    }
 
-    // Vouchers a member has redeemed. Anyone can read (to show "my
-    // vouchers" without a real auth system), but a voucher can only be
-    // CREATED via the exact catalog values (matching the points deduction
-    // above), and can only be marked used once (false -> true), never
-    // un-used or have its value changed.
-    //
-    // SECURITY NOTE: the create rule also checks the member's CURRENT
-    // points balance via get() so a voucher can't be minted for a phone
-    // number with insufficient points, even if someone calls the Firestore
-    // API directly instead of going through the website. This doesn't
-    // make redemption fully atomic (a sufficiently technical user could
-    // still replay a create call without the paired points-deduction
-    // update and mint more than one voucher off the same balance) - truly
-    // closing that would need server-side logic (Cloud Functions), which
-    // this static-site architecture doesn't have. Given the low value at
-    // stake (a Rp5.000 discount), this is treated as an accepted,
-    // disclosed limitation rather than something worth adding a paid
-    // backend for right now.
-    match /lighture_vouchers/{voucherId} {
-      allow read: if true;
-      allow create: if request.auth != null || (
-        request.resource.data.used == false &&
-        request.resource.data.code == 'YEY5RB' &&
-        request.resource.data.discount == 5000 &&
-        request.resource.data.owner_phone is string &&
-        request.resource.data.owner_phone.size() > 0 &&
-        get(/databases/$(database)/documents/lighture_members/$(request.resource.data.owner_phone)).data.points >= 70
-      );
-      allow update: if request.auth != null || (
-        resource.data.used == false &&
-        request.resource.data.used == true &&
-        request.resource.data.owner_phone == resource.data.owner_phone &&
-        request.resource.data.code == resource.data.code &&
-        request.resource.data.discount == resource.data.discount
-      );
-      allow delete: if request.auth != null;
+      // Vouchers now live UNDER their owning member (subcollection) instead
+      // of one flat top-level collection. This means a voucher can only be
+      // listed/read by someone who already knows that specific phone
+      // number's path - there is no single query anywhere that returns
+      // every customer's phone number via their vouchers anymore.
+      match /vouchers/{voucherId} {
+        allow get, list: if true;
+        allow create: if request.auth != null || (
+          request.resource.data.used == false &&
+          request.resource.data.code == 'YEY5RB' &&
+          request.resource.data.discount == 5000 &&
+          request.resource.data.owner_phone == phone &&
+          get(/databases/$(database)/documents/lighture_members/$(phone)).data.points >= 70
+        );
+        allow update: if request.auth != null || (
+          resource.data.used == false &&
+          request.resource.data.used == true &&
+          request.resource.data.owner_phone == resource.data.owner_phone &&
+          request.resource.data.code == resource.data.code &&
+          request.resource.data.discount == resource.data.discount
+        );
+        allow delete: if request.auth != null;
+      }
     }
   }
 }
